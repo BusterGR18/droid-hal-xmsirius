@@ -1,0 +1,71 @@
+diff --git a/AccessControl.cpp b/AccessControl.cpp
+index c8366ca..d0ca397 100644
+--- a/AccessControl.cpp
++++ b/AccessControl.cpp
+@@ -37,6 +37,14 @@ struct audit_data {
+ using android::FQName;
+ 
+ AccessControl::AccessControl() {
++    // hybris: Sailfish OS runs without SELinux. Skip the hard SELinux checks
++    // and allow every request, instead of aborting.
++    if (is_selinux_enabled() <= 0) {
++        ALOGW("SELinux is disabled, allowing all hwservicemanager requests");
++        mSelinuxEnabled = false;
++        return;
++    }
++
+     mSeHandle = selinux_android_hw_service_context_handle();
+     LOG_ALWAYS_FATAL_IF(mSeHandle == nullptr, "Failed to acquire SELinux handle.");
+ 
+@@ -82,6 +90,11 @@ bool AccessControl::canList(const CallingContext& callingContext) {
+ AccessControl::CallingContext AccessControl::getCallingContext(pid_t sourcePid) {
+     char *sourceContext = nullptr;
+ 
++    // hybris: static member, so ask libselinux directly instead of mSelinuxEnabled.
++    if (is_selinux_enabled() <= 0) {
++        return { true, "", sourcePid };
++    }
++
+     if (getpidcon(sourcePid, &sourceContext) < 0) {
+         ALOGE("SELinux: failed to retrieve process context for pid %d", sourcePid);
+         return { false, "", sourcePid };
+@@ -93,6 +106,10 @@ AccessControl::CallingContext AccessControl::getCallingContext(pid_t sourcePid)
+ }
+ 
+ bool AccessControl::checkPermission(const CallingContext& source, const char *targetContext, const char *perm, const char *interface) {
++    if (!mSelinuxEnabled) {
++        return true;
++    }
++
+     if (!source.sidPresent) {
+         return false;
+     }
+@@ -114,6 +131,10 @@ bool AccessControl::checkPermission(const CallingContext& source, const char *pe
+     char *targetContext = nullptr;
+     bool allowed = false;
+ 
++    if (!mSelinuxEnabled) {
++        return true;
++    }
++
+     // Lookup service in hwservice_contexts
+     if (selabel_lookup(mSeHandle, &targetContext, interface, 0) != 0) {
+         ALOGE("No match for interface %s in hwservice_contexts", interface);
+diff --git a/AccessControl.h b/AccessControl.h
+index 6462d28..486e663 100644
+--- a/AccessControl.h
++++ b/AccessControl.h
+@@ -45,9 +45,11 @@ private:
+ 
+     static int auditCallback(void *data, security_class_t cls, char *buf, size_t len);
+ 
+-    char*                  mSeContext;
+-    struct selabel_handle* mSeHandle;
++    char*                  mSeContext = nullptr;
++    struct selabel_handle* mSeHandle = nullptr;
+     union selinux_callback mSeCallbacks;
++    // hybris: false when SELinux is disabled (no selinuxfs); all access checks then pass.
++    bool                   mSelinuxEnabled = true;
+ };
+ 
+ } // namespace android

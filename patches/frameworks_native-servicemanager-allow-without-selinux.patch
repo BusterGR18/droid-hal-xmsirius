@@ -1,0 +1,75 @@
+diff --git a/cmds/servicemanager/Access.cpp b/cmds/servicemanager/Access.cpp
+index b7e520f2f1..8c944732ad 100644
+--- a/cmds/servicemanager/Access.cpp
++++ b/cmds/servicemanager/Access.cpp
+@@ -80,6 +80,14 @@ static int auditCallback(void *data, security_class_t /*cls*/, char *buf, size_t
+ }
+ 
+ Access::Access() {
++    // hybris: Sailfish OS runs without SELinux. Skip the hard SELinux checks
++    // and allow every request, instead of aborting.
++    if (is_selinux_enabled() <= 0) {
++        LOG(WARNING) << "SELinux is disabled, allowing all service manager requests";
++        mSelinuxEnabled = false;
++        return;
++    }
++
+     union selinux_callback cb;
+ 
+     cb.func_audit = auditCallback;
+@@ -94,7 +102,7 @@ Access::Access() {
+ }
+ 
+ Access::~Access() {
+-    freecon(mThisProcessContext);
++    if (mThisProcessContext != nullptr) freecon(mThisProcessContext);
+ }
+ 
+ Access::CallingContext Access::getCallingContext() {
+@@ -103,22 +111,32 @@ Access::CallingContext Access::getCallingContext() {
+     const char* callingSid = ipc->getCallingSid();
+     pid_t callingPid = ipc->getCallingPid();
+ 
++    std::string sid;
++    if (callingSid) {
++        sid = callingSid;
++    } else if (mSelinuxEnabled) {
++        sid = getPidcon(callingPid);
++    }
++
+     return CallingContext {
+         .debugPid = callingPid,
+         .uid = ipc->getCallingUid(),
+-        .sid = callingSid ? std::string(callingSid) : getPidcon(callingPid),
++        .sid = sid,
+     };
+ }
+ 
+ bool Access::canFind(const CallingContext& ctx,const std::string& name) {
++    if (!mSelinuxEnabled) return true;
+     return actionAllowedFromLookup(ctx, name, "find");
+ }
+ 
+ bool Access::canAdd(const CallingContext& ctx, const std::string& name) {
++    if (!mSelinuxEnabled) return true;
+     return actionAllowedFromLookup(ctx, name, "add");
+ }
+ 
+ bool Access::canList(const CallingContext& ctx) {
++    if (!mSelinuxEnabled) return true;
+     return actionAllowed(ctx, mThisProcessContext, "list", "service_manager");
+ }
+ 
+diff --git a/cmds/servicemanager/Access.h b/cmds/servicemanager/Access.h
+index 77c2cd4ed6..445e8a6065 100644
+--- a/cmds/servicemanager/Access.h
++++ b/cmds/servicemanager/Access.h
+@@ -51,6 +51,8 @@ private:
+             const char *perm);
+ 
+     char* mThisProcessContext = nullptr;
++    // hybris: false when SELinux is disabled (no selinuxfs); all access checks then pass.
++    bool mSelinuxEnabled = true;
+ };
+ 
+ };
